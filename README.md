@@ -128,7 +128,43 @@ The setup script creates:
 
 ### Registering Services
 
-Add JSON files to `consul-server/consul.d/` and reload Consul:
+Services can be registered in two ways. Both can be used simultaneously.
+
+#### Automatic via Registrator (Docker containers)
+
+The Docker Compose stack includes [Registrator](https://github.com/gliderlabs/registrator), which watches the Docker socket and automatically registers/deregisters containers as they start and stop.
+
+Registrator runs with `-explicit=true`, so only containers with `SERVICE_NAME` set are registered. The `kubernetes` tag is added automatically.
+
+Add these environment variables to your application containers:
+
+```yaml
+services:
+  plex:
+    image: plexinc/pms-docker
+    ports:
+      - "32400:32400"
+    environment:
+      SERVICE_NAME: plex
+      SERVICE_32400_CHECK_HTTP: /web
+      SERVICE_32400_CHECK_INTERVAL: 30s
+      SERVICE_32400_CHECK_TIMEOUT: 5s
+```
+
+| Variable | Description |
+|---|---|
+| `SERVICE_NAME` | Consul service name (required for registration) |
+| `SERVICE_<port>_CHECK_HTTP` | HTTP health check path |
+| `SERVICE_<port>_CHECK_TCP` | TCP health check (alternative to HTTP) |
+| `SERVICE_<port>_CHECK_INTERVAL` | Health check interval |
+| `SERVICE_<port>_CHECK_TIMEOUT` | Health check timeout |
+| `SERVICE_TAGS` | Additional comma-separated tags |
+
+When a container stops, Registrator automatically deregisters it from Consul.
+
+#### Manual via JSON files (non-Docker services)
+
+For services not running in Docker (bare-metal, VMs, etc.), add JSON files to `consul-server/consul.d/` and reload Consul:
 
 ```json
 {

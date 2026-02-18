@@ -12,5 +12,16 @@ services:
     environment:
       CONSUL_BIND_INTERFACE: eth0
 
+  registrator:
+    image: gliderlabs/registrator:latest
+    container_name: registrator
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      - consul
+    volumes:
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    command: -internal=false -explicit=true -cleanup -tags=kubernetes consul://localhost:8500
+
 volumes:
   consul-data:
