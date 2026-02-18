@@ -1,9 +1,10 @@
-FROM golang:1.23-alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.23-alpine AS builder
+ARG TARGETOS TARGETARCH
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -ldflags="-s -w" -o /consul-sync ./cmd/consul-sync
+RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -ldflags="-s -w" -o /consul-sync ./cmd/consul-sync
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /consul-sync /consul-sync
