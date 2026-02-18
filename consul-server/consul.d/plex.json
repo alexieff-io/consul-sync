@@ -1,0 +1,13 @@
+{
+  "service": {
+    "name": "plex",
+    "tags": ["kubernetes"],
+    "port": 32400,
+    "address": "10.0.10.100",
+    "check": {
+      "http": "http://10.0.10.100:32400/web",
+      "interval": "30s",
+      "timeout": "5s"
+    }
+  }
+}

@@ -1,0 +1,13 @@
+{
+  "service": {
+    "name": "homeassistant",
+    "tags": ["kubernetes"],
+    "port": 8123,
+    "address": "10.0.10.100",
+    "check": {
+      "http": "http://10.0.10.100:8123/api/",
+      "interval": "30s",
+      "timeout": "5s"
+    }
+  }
+}
