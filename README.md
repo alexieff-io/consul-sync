@@ -5,19 +5,19 @@ A lightweight Go controller that watches HashiCorp Consul for services tagged wi
 ## How It Works
 
 ```
-Docker Host (different subnet)         Kubernetes Cluster
-┌─────────────────────────┐           ┌──────────────────────────────────┐
-│ Consul Server           │           │  consul-sync controller          │
-│   ├─ plex (tagged       │◄──watch──│    │                             │
-│   │   "kubernetes")     │           │    ├─ Creates Service "plex"     │
-│   ├─ homeassistant      │           │    └─ Creates EndpointSlice      │
-│   └─ ...                │           │         with Docker host IPs     │
-│                         │           │                                  │
-│ Docker containers       │           │  Envoy Gateway                   │
-│   ├─ plex:32400     ◄───┼───────────┤    ├─ HTTPRoute → Service "plex" │
-│   ├─ hass:8123      ◄───┼───────────┤    └─ TLS termination + auth    │
-│   └─ ...                │           │                                  │
-└─────────────────────────┘           └──────────────────────────────────┘
+Docker Host(s)                        Kubernetes Cluster (network namespace)
+┌──────────────────────┐             ┌─────────────────────────────────────┐
+│ Registrator          │──register──▶│ Consul (app-template HelmRelease)  │
+│   watches Docker     │             │   LoadBalancer IP on 10.69.0.0/24  │
+│   socket, registers  │             │   Persistent storage via Longhorn  │
+│   containers w/      │             │                                    │
+│   SERVICE_NAME env   │             │ consul-sync controller             │
+│                      │             │   watches Consul (ClusterIP)       │
+│ Docker containers    │             │   creates Services+EndpointSlices  │
+│   ├─ plex            │             │                                    │
+│   ├─ homeassistant   │◀──traffic──│ Envoy Gateway                      │
+│   └─ ...             │             │   HTTPRoutes → synced Services     │
+└──────────────────────┘             └─────────────────────────────────────┘
 ```
 
 1. Polls Consul `/v1/catalog/services?tag=kubernetes` using blocking queries (long-poll, near-instant updates)
@@ -76,12 +76,8 @@ consul-sync/
 │   │   └── metrics.go                 # Prometheus counters/gauges
 │   └── health/
 │       └── health.go                  # /healthz, /readyz, /metrics server
-├── consul-server/                     # Docker host Consul setup
-│   ├── docker-compose.yaml
-│   ├── consul.d/server.json
-│   ├── consul.d/plex.json            # Example service registration
-│   ├── consul.d/homeassistant.json   # Example service registration
-│   └── setup-acl.sh                  # ACL bootstrap script
+├── consul-server/
+│   └── docker-compose.yaml            # Registrator (points at Consul in K8s)
 ├── Dockerfile
 ├── go.mod
 └── go.sum
@@ -100,41 +96,39 @@ docker build -t ghcr.io/alexieff-io/consul-sync:latest .
 ## Local Development
 
 ```bash
-export CONSUL_ADDR=http://10.0.10.100:8500
+export CONSUL_ADDR=http://<consul-lb-ip>:8500
 export CONSUL_TOKEN=your-token-here
 export KUBECONFIG=~/.kube/config
 
 go run ./cmd/consul-sync
 ```
 
-## Consul Server Setup
+## Consul Server
 
-See `consul-server/` for a ready-to-use Docker Compose setup.
+Consul runs in Kubernetes (deployed via Flux in the `network` namespace using the bjw-s app-template). The cluster repo contains the deployment at `kubernetes/apps/network/consul/`.
+
+ACL is enabled with `initial_management` token sourced from 1Password via ExternalSecret. After deploying Consul, run the ACL setup script in the cluster repo to create agent tokens:
 
 ```bash
-cd consul-server
-
-# Start Consul
-docker compose up -d
-
-# Bootstrap ACL and create tokens
-./setup-acl.sh
+# From the cluster repo
+./scripts/setup-consul-acl.sh <management-token>
 ```
 
-The setup script creates:
-- A **master token** (save securely)
-- A **consul-sync token** (read-only, store in 1Password as `consul-acl-token`)
-- An **agent token** (for service registration)
+### Registrator Setup (Docker Hosts)
 
-### Registering Services
+`consul-server/docker-compose.yaml` runs [Registrator](https://github.com/gliderlabs/registrator) on Docker hosts, pointing at the Consul LoadBalancer IP in Kubernetes.
 
-Services can be registered in two ways. Both can be used simultaneously.
+```bash
+# Get the Consul LoadBalancer IP
+kubectl -n network get svc consul -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
 
-#### Automatic via Registrator (Docker containers)
-
-The Docker Compose stack includes [Registrator](https://github.com/gliderlabs/registrator), which watches the Docker socket and automatically registers/deregisters containers as they start and stop.
+# Start Registrator
+CONSUL_HTTP_ADDR=<consul-lb-ip> CONSUL_TOKEN=<registrator-token> docker compose up -d
+```
 
 Registrator runs with `-explicit=true`, so only containers with `SERVICE_NAME` set are registered. The `kubernetes` tag is added automatically.
+
+### Registering Docker Services
 
 Add these environment variables to your application containers:
 
@@ -161,30 +155,6 @@ services:
 | `SERVICE_TAGS` | Additional comma-separated tags |
 
 When a container stops, Registrator automatically deregisters it from Consul.
-
-#### Manual via JSON files (non-Docker services)
-
-For services not running in Docker (bare-metal, VMs, etc.), add JSON files to `consul-server/consul.d/` and reload Consul:
-
-```json
-{
-  "service": {
-    "name": "myapp",
-    "tags": ["kubernetes"],
-    "port": 8080,
-    "address": "10.0.10.100",
-    "check": {
-      "http": "http://10.0.10.100:8080/health",
-      "interval": "30s",
-      "timeout": "5s"
-    }
-  }
-}
-```
-
-```bash
-docker exec consul consul reload
-```
 
 ## Kubernetes Deployment
 

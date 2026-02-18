@@ -1,35 +1,22 @@
 ---
-services:
-  consul:
-    image: hashicorp/consul:1.20
-    container_name: consul
-    restart: unless-stopped
-    network_mode: host
-    volumes:
-      - consul-data:/consul/data
-      - ./consul.d:/consul/config:ro
-    command: agent -server -bootstrap-expect=1 -ui -config-dir=/consul/config
-    environment:
-      CONSUL_BIND_INTERFACE: eth0
-      CONSUL_LOCAL_CONFIG: >-
-        {
-          "datacenter": "home",
-          "log_level": "INFO",
-          "ui_config": {"enabled": true},
-          "addresses": {"http": "0.0.0.0"},
-          "acl": {"enabled": true, "default_policy": "deny", "enable_token_persistence": true}
-        }
+# Registrator watches the Docker socket and registers/deregisters containers
+# in the Consul server running in Kubernetes.
+#
+# Set CONSUL_HTTP_ADDR to the Consul LoadBalancer IP from K8s:
+#   kubectl -n network get svc consul -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+#
+# Set CONSUL_TOKEN to the registrator ACL token created by setup-consul-acl.sh.
 
+services:
   registrator:
     image: hypolas/registrator:latest
     container_name: registrator
     restart: unless-stopped
     network_mode: host
-    depends_on:
-      - consul
     volumes:
       - /var/run/docker.sock:/tmp/docker.sock:ro
-    command: -internal=false -explicit=true -cleanup -tags=kubernetes consul://localhost:8500
-
-volumes:
-  consul-data:
+    command: >-
+      -internal=false -explicit=true -cleanup -tags=kubernetes
+      consul://${CONSUL_HTTP_ADDR:?Set CONSUL_HTTP_ADDR to Consul LB IP}:8500
+    environment:
+      CONSUL_HTTP_TOKEN: ${CONSUL_TOKEN:?Set CONSUL_TOKEN to registrator ACL token}
