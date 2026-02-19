@@ -30,4 +30,9 @@ var (
 		Name: "consul_sync_kubernetes_errors_total",
 		Help: "Total errors communicating with the Kubernetes API",
 	})
+
+	SyncedHTTPRoutes = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "consul_sync_httproutes_total",
+		Help: "Number of currently synced HTTPRoute resources",
+	})
 )

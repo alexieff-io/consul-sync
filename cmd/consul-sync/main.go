@@ -6,9 +6,11 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
+	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -29,13 +31,21 @@ func main() {
 		"target_namespace", cfg.targetNamespace,
 		"metrics_addr", cfg.metricsAddr,
 		"resync_interval", cfg.resyncInterval,
+		"enable_httproutes", cfg.routeCfg.Enabled,
+		"domain_suffix", cfg.routeCfg.DomainSuffix,
+		"internal_gateway", cfg.routeCfg.InternalGateway,
+		"external_gateway", cfg.routeCfg.ExternalGateway,
+		"gateway_namespace", cfg.routeCfg.GatewayNamespace,
+		"gateway_listener", cfg.routeCfg.GatewayListener,
+		"internal_tag", cfg.routeCfg.InternalTag,
+		"external_tag", cfg.routeCfg.ExternalTag,
 	)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT)
 	defer cancel()
 
 	// Kubernetes client
-	k8sClient, err := newKubernetesClient()
+	k8sClient, dynClient, err := newKubernetesClients()
 	if err != nil {
 		slog.Error("failed to create kubernetes client", "error", err)
 		os.Exit(1)
@@ -43,7 +53,7 @@ func main() {
 
 	// Components
 	watcher := consul.NewWatcher(cfg.consulAddr, cfg.consulToken, cfg.consulTag)
-	syncer := k8s.NewSyncer(k8sClient, cfg.targetNamespace)
+	syncer := k8s.NewSyncer(k8sClient, dynClient, cfg.targetNamespace, cfg.routeCfg)
 	healthSrv := health.NewServer(cfg.metricsAddr)
 	rec := reconciler.New(watcher, syncer, healthSrv, cfg.resyncInterval)
 
@@ -78,15 +88,28 @@ type config struct {
 	targetNamespace string
 	metricsAddr     string
 	resyncInterval  time.Duration
+	routeCfg        k8s.HTTPRouteConfig
 }
 
 func loadConfig() config {
+	targetNamespace := envOrDefault("TARGET_NAMESPACE", "network")
+
 	cfg := config{
 		consulAddr:      os.Getenv("CONSUL_ADDR"),
 		consulToken:     os.Getenv("CONSUL_TOKEN"),
 		consulTag:       envOrDefault("CONSUL_TAG", "kubernetes"),
-		targetNamespace: envOrDefault("TARGET_NAMESPACE", "network"),
+		targetNamespace: targetNamespace,
 		metricsAddr:     envOrDefault("METRICS_ADDR", ":8080"),
+		routeCfg: k8s.HTTPRouteConfig{
+			Enabled:          strings.ToLower(envOrDefault("ENABLE_HTTPROUTES", "true")) == "true",
+			DomainSuffix:     envOrDefault("DOMAIN_SUFFIX", "k8s.alexieff.io"),
+			InternalGateway:  envOrDefault("INTERNAL_GATEWAY", "envoy-internal"),
+			ExternalGateway:  envOrDefault("EXTERNAL_GATEWAY", "envoy-external"),
+			GatewayNamespace: envOrDefault("GATEWAY_NAMESPACE", targetNamespace),
+			GatewayListener:  envOrDefault("GATEWAY_LISTENER", "https"),
+			InternalTag:      envOrDefault("INTERNAL_TAG", "internal"),
+			ExternalTag:      envOrDefault("EXTERNAL_TAG", "external"),
+		},
 	}
 
 	if cfg.consulAddr == "" {
@@ -112,7 +135,7 @@ func envOrDefault(key, defaultVal string) string {
 	return defaultVal
 }
 
-func newKubernetesClient() (kubernetes.Interface, error) {
+func newKubernetesClients() (kubernetes.Interface, dynamic.Interface, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		// Fallback to kubeconfig for local development
@@ -122,8 +145,19 @@ func newKubernetesClient() (kubernetes.Interface, error) {
 		}
 		cfg, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
 		if err != nil {
-			return nil, fmt.Errorf("building kubeconfig: %w", err)
+			return nil, nil, fmt.Errorf("building kubeconfig: %w", err)
 		}
 	}
-	return kubernetes.NewForConfig(cfg)
+
+	k8sClient, err := kubernetes.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating kubernetes client: %w", err)
+	}
+
+	dynClient, err := dynamic.NewForConfig(cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("creating dynamic client: %w", err)
+	}
+
+	return k8sClient, dynClient, nil
 }

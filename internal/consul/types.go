@@ -12,4 +12,5 @@ type ServiceInstance struct {
 type ServiceState struct {
 	Name      string
 	Instances []ServiceInstance
+	Tags      []string // union of tags across all instances
 }

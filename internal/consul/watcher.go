@@ -203,6 +203,7 @@ func (w *Watcher) WatchServices(ctx context.Context) (<-chan []ServiceState, err
 				states = append(states, ServiceState{
 					Name:      name,
 					Instances: instances,
+					Tags:      collectTags(instances),
 				})
 			}
 
@@ -240,7 +241,23 @@ func (w *Watcher) FetchAllServices(ctx context.Context) ([]ServiceState, error) 
 		states = append(states, ServiceState{
 			Name:      name,
 			Instances: instances,
+			Tags:      collectTags(instances),
 		})
 	}
 	return states, nil
+}
+
+// collectTags returns a deduplicated union of tags across all instances.
+func collectTags(instances []ServiceInstance) []string {
+	seen := make(map[string]struct{})
+	var tags []string
+	for _, inst := range instances {
+		for _, t := range inst.Tags {
+			if _, ok := seen[t]; !ok {
+				seen[t] = struct{}{}
+				tags = append(tags, t)
+			}
+		}
+	}
+	return tags
 }
