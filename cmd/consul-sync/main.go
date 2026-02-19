@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -21,11 +22,27 @@ import (
 	"github.com/alexieff-io/consul-sync/internal/reconciler"
 )
 
+// Set via -ldflags at build time.
+var (
+	version = "dev"
+	commit  = "unknown"
+)
+
 func main() {
+	showVersion := flag.Bool("version", false, "Print version and exit")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Printf("consul-sync %s (commit: %s)\n", version, commit)
+		os.Exit(0)
+	}
+
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo})))
 
 	cfg := loadConfig()
 	slog.Info("starting consul-sync",
+		"version", version,
+		"commit", commit,
 		"consul_addr", cfg.consulAddr,
 		"consul_tag", cfg.consulTag,
 		"target_namespace", cfg.targetNamespace,
@@ -54,7 +71,7 @@ func main() {
 	// Components
 	watcher := consul.NewWatcher(cfg.consulAddr, cfg.consulToken, cfg.consulTag)
 	syncer := k8s.NewSyncer(k8sClient, dynClient, cfg.targetNamespace, cfg.routeCfg)
-	healthSrv := health.NewServer(cfg.metricsAddr)
+	healthSrv := health.NewServer(cfg.metricsAddr, version, commit)
 	rec := reconciler.New(watcher, syncer, healthSrv, cfg.resyncInterval)
 
 	// Start health/metrics server

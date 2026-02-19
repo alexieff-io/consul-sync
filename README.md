@@ -56,6 +56,7 @@ All configuration is via environment variables:
 |---|---|
 | `GET /healthz` | Liveness probe — always returns 200 |
 | `GET /readyz` | Readiness probe — returns 200 after first successful sync, 503 before |
+| `GET /version` | Returns JSON with version and commit hash |
 | `GET /metrics` | Prometheus metrics |
 
 ## Metrics
@@ -85,7 +86,7 @@ consul-sync/
 │   ├── metrics/
 │   │   └── metrics.go                 # Prometheus counters/gauges
 │   └── health/
-│       └── health.go                  # /healthz, /readyz, /metrics server
+│       └── health.go                  # /healthz, /readyz, /version, /metrics server
 ├── consul-server/
 │   └── docker-compose.yaml            # Registrator (points at Consul in K8s)
 ├── Dockerfile
@@ -99,8 +100,16 @@ consul-sync/
 # Build locally
 go build -o consul-sync ./cmd/consul-sync
 
-# Build container image
-docker build -t ghcr.io/alexieff-io/consul-sync:latest .
+# Build with version info
+go build -ldflags="-X main.version=v1.0.0 -X main.commit=$(git rev-parse HEAD)" \
+    -o consul-sync ./cmd/consul-sync
+
+# Build container image (version injected automatically in CI)
+docker build --build-arg VERSION=v1.0.0 --build-arg COMMIT=$(git rev-parse HEAD) \
+    -t ghcr.io/alexieff-io/consul-sync:latest .
+
+# Check version
+./consul-sync --version
 ```
 
 ## Local Development

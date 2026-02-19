@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"sync/atomic"
 
@@ -10,14 +11,16 @@ import (
 
 // Server serves health check and metrics endpoints.
 type Server struct {
-	addr   string
-	ready  atomic.Bool
-	server *http.Server
+	addr    string
+	ready   atomic.Bool
+	server  *http.Server
+	version string
+	commit  string
 }
 
 // NewServer creates a new health/metrics server.
-func NewServer(addr string) *Server {
-	return &Server{addr: addr}
+func NewServer(addr, version, commit string) *Server {
+	return &Server{addr: addr, version: version, commit: commit}
 }
 
 // SetReady marks the server as ready (called after first successful sync).
@@ -42,6 +45,14 @@ func (s *Server) ListenAndServe() error {
 			w.WriteHeader(http.StatusServiceUnavailable)
 			w.Write([]byte("not ready"))
 		}
+	})
+
+	mux.HandleFunc("GET /version", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]string{
+			"version": s.version,
+			"commit":  s.commit,
+		})
 	})
 
 	mux.Handle("GET /metrics", promhttp.Handler())
