@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"regexp"
@@ -42,6 +43,7 @@ func NewSyncer(client kubernetes.Interface, namespace string) *Syncer {
 func (s *Syncer) Sync(ctx context.Context, services []consul.ServiceState) error {
 	desired := make(map[string]bool)
 	var totalEndpoints int
+	var syncErrors []error
 
 	for _, svc := range services {
 		name := sanitizeName(svc.Name)
@@ -53,16 +55,24 @@ func (s *Syncer) Sync(ctx context.Context, services []consul.ServiceState) error
 		}
 
 		port := int32(svc.Instances[0].Port)
+		if port < 1 || port > 65535 {
+			slog.Warn("skipping service with invalid port", "service", svc.Name, "port", port)
+			continue
+		}
 		totalEndpoints += len(svc.Instances)
 
 		if err := s.applyService(ctx, name, port); err != nil {
 			metrics.KubernetesErrors.Inc()
-			return fmt.Errorf("applying service %s: %w", name, err)
+			slog.Error("failed to apply service, skipping", "service", name, "error", err)
+			syncErrors = append(syncErrors, fmt.Errorf("applying service %s: %w", name, err))
+			continue
 		}
 
 		if err := s.applyEndpointSlice(ctx, name, port, svc.Instances); err != nil {
 			metrics.KubernetesErrors.Inc()
-			return fmt.Errorf("applying endpointslice %s: %w", name, err)
+			slog.Error("failed to apply endpointslice, skipping", "service", name, "error", err)
+			syncErrors = append(syncErrors, fmt.Errorf("applying endpointslice %s: %w", name, err))
+			continue
 		}
 
 		slog.Info("synced service", "service", name, "endpoints", len(svc.Instances))
@@ -71,13 +81,13 @@ func (s *Syncer) Sync(ctx context.Context, services []consul.ServiceState) error
 	// Cleanup orphaned resources
 	if err := s.cleanup(ctx, desired); err != nil {
 		metrics.KubernetesErrors.Inc()
-		return fmt.Errorf("cleaning up orphans: %w", err)
+		syncErrors = append(syncErrors, fmt.Errorf("cleaning up orphans: %w", err))
 	}
 
 	metrics.SyncedServices.Set(float64(len(desired)))
 	metrics.SyncedEndpoints.Set(float64(totalEndpoints))
 
-	return nil
+	return errors.Join(syncErrors...)
 }
 
 func (s *Syncer) applyService(ctx context.Context, name string, port int32) error {

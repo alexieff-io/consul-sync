@@ -72,13 +72,15 @@ func (w *Watcher) ListServices(ctx context.Context, waitIndex uint64) ([]string,
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, 0, fmt.Errorf("consul returned %d: %s", resp.StatusCode, string(body))
 	}
 
 	newIndex, err := strconv.ParseUint(resp.Header.Get("X-Consul-Index"), 10, 64)
-	if err != nil {
-		newIndex = 0
+	if err != nil || newIndex == 0 {
+		// Consul indexes start at 1; using 0 would make the next blocking
+		// query return immediately, causing a tight loop.
+		newIndex = 1
 	}
 
 	var catalog catalogServicesResponse
@@ -117,7 +119,7 @@ func (w *Watcher) GetServiceInstances(ctx context.Context, serviceName string) (
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
 		return nil, fmt.Errorf("consul returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -190,6 +192,12 @@ func (w *Watcher) WatchServices(ctx context.Context) (<-chan []ServiceState, err
 				instances, err := w.GetServiceInstances(ctx, name)
 				if err != nil {
 					slog.Error("failed to get service instances", "service", name, "error", err)
+					// Include the service with nil instances so the syncer
+					// still sees it in the desired set and won't orphan-delete it.
+					states = append(states, ServiceState{
+						Name:      name,
+						Instances: nil,
+					})
 					continue
 				}
 				states = append(states, ServiceState{
@@ -221,6 +229,12 @@ func (w *Watcher) FetchAllServices(ctx context.Context) ([]ServiceState, error) 
 		instances, err := w.GetServiceInstances(ctx, name)
 		if err != nil {
 			slog.Error("failed to get service instances during resync", "service", name, "error", err)
+			// Include the service with nil instances so the syncer
+			// still sees it in the desired set and won't orphan-delete it.
+			states = append(states, ServiceState{
+				Name:      name,
+				Instances: nil,
+			})
 			continue
 		}
 		states = append(states, ServiceState{

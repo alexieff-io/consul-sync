@@ -61,6 +61,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Gracefully shut down the health server
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := healthSrv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("health server shutdown error", "error", err)
+	}
+
 	slog.Info("consul-sync stopped")
 }
 

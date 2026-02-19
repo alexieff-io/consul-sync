@@ -1,6 +1,7 @@
 package health
 
 import (
+	"context"
 	"net/http"
 	"sync/atomic"
 
@@ -9,8 +10,9 @@ import (
 
 // Server serves health check and metrics endpoints.
 type Server struct {
-	addr  string
-	ready atomic.Bool
+	addr   string
+	ready  atomic.Bool
+	server *http.Server
 }
 
 // NewServer creates a new health/metrics server.
@@ -44,5 +46,14 @@ func (s *Server) ListenAndServe() error {
 
 	mux.Handle("GET /metrics", promhttp.Handler())
 
-	return http.ListenAndServe(s.addr, mux)
+	s.server = &http.Server{Addr: s.addr, Handler: mux}
+	return s.server.ListenAndServe()
+}
+
+// Shutdown gracefully shuts down the HTTP server.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.server != nil {
+		return s.server.Shutdown(ctx)
+	}
+	return nil
 }
