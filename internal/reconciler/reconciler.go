@@ -72,12 +72,15 @@ func (r *Reconciler) reconcile(ctx context.Context, states []consul.ServiceState
 	slog.Info("reconciling", "trigger", trigger, "services", len(states))
 
 	if err := r.syncer.Sync(ctx, states); err != nil {
-		slog.Error("sync failed", "trigger", trigger, "error", err)
+		slog.Error("sync completed with errors", "trigger", trigger, "error", err)
 		metrics.ReconcileTotal.WithLabelValues("error").Inc()
-		return
+	} else {
+		metrics.ReconcileTotal.WithLabelValues("success").Inc()
 	}
 
-	metrics.ReconcileTotal.WithLabelValues("success").Inc()
+	// Mark ready after the first sync completes, even with partial errors.
+	// Partial failures (e.g. one bad service) shouldn't block readiness
+	// for the entire controller.
 	r.healthServer.SetReady()
 	slog.Info("reconciliation complete", "trigger", trigger, "services", len(states))
 }
